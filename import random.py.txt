@@ -1,0 +1,86 @@
+import numpy as np
+import random
+from flask import Flask, request, jsonify
+import requests
+
+app = Flask(__name__)
+
+def fetch_game_data(game_url):
+    """
+    Fetch game data from the provided URL.
+    Returns the current grid state and revealed tiles.
+    """
+    response = requests.get(game_url)
+    if response.status_code == 200:
+        return response.json()  # Assume JSON structure: {grid, revealed_tiles}
+    else:
+        raise ValueError("Failed to fetch game data. Check the URL.")
+
+def calculate_probabilities(size, num_bombs, revealed_tiles):
+    """
+    Calculate probabilities for each box being a bomb.
+    """
+    probabilities = np.full((size, size), num_bombs / (size * size), dtype=float)
+    for tile in revealed_tiles:
+        x, y = tile
+        probabilities[x][y] = 0  # No bomb in revealed tiles
+
+    # Refinement step (e.g., Bayesian updates or patterns analysis)
+    # Add custom logic based on additional game rules or observations
+    return probabilities
+
+def predict_safe_boxes(probabilities, num_to_open):
+    """
+    Select the safest boxes to open based on probabilities.
+    """
+    flat_probs = probabilities.flatten()
+    safe_indices = flat_probs.argsort()[:num_to_open]  # Lowest probabilities
+    safe_boxes = [(idx // probabilities.shape[1], idx % probabilities.shape[1]) for idx in safe_indices]
+    return safe_boxes
+
+def predict_bombs(probabilities, num_bombs):
+    """
+    Predict the most likely bomb locations.
+    """
+    flat_probs = probabilities.flatten()
+    bomb_indices = flat_probs.argsort()[-num_bombs:]  # Highest probabilities
+    bomb_locations = [(idx // probabilities.shape[1], idx % probabilities.shape[1]) for idx in bomb_indices]
+    return bomb_locations
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    """
+    Predict the next safe boxes and bomb locations.
+    """
+    data = request.json
+    game_url = data.get('game_url')
+    num_to_open = data.get('num_to_open', 5)
+    num_bombs = data.get('num_bombs', 3)
+    size = data.get('size', 10)
+
+    if not game_url:
+        return jsonify({"error": "game_url is required"}), 400
+
+    try:
+        # Fetch game data
+        game_data = fetch_game_data(game_url)
+        grid = np.array(game_data['grid'])
+        revealed_tiles = game_data['revealed_tiles']
+
+        # Calculate probabilities
+        probabilities = calculate_probabilities(size, num_bombs, revealed_tiles)
+
+        # Predict safe boxes and bomb locations
+        safe_boxes = predict_safe_boxes(probabilities, num_to_open)
+        bomb_locations = predict_bombs(probabilities, num_bombs)
+
+        return jsonify({
+            "safe_boxes": safe_boxes,
+            "bomb_locations": bomb_locations,
+            "probabilities": probabilities.tolist()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
